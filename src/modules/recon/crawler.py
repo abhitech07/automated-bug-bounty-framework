@@ -142,7 +142,7 @@ class Crawler:
             links = []
             forms = []
             if 'text/html' in response.headers.get('content-type', '').lower():
-                soup = BeautifulSoup(response.content, 'lxml')
+                soup = BeautifulSoup(response.content, 'html.parser')
                 links = self.extract_links(soup, url)
                 forms = self.extract_forms(soup)
             
