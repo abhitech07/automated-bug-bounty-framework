@@ -137,5 +137,42 @@ class TechnologyFootprint(Base):
     detected_by = Column(String(50))  # 'header', 'content', 'cookie', 'url_pattern'
     created_at = Column(DateTime, default=datetime.utcnow)
     
+class Subdomain(Base):
+    """Database model for discovered subdomains"""
+    __tablename__ = 'subdomains'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    scan_job_id = Column(Integer, ForeignKey('scan_jobs.id', ondelete='CASCADE'))
+    domain = Column(String(255), nullable=False, index=True)
+    subdomain = Column(String(255), nullable=False, index=True)
+    ip_addresses = Column(JSON)  # List of IP addresses
+    cname = Column(String(255))
+    status = Column(String(50))  # active, inactive, active_http
+    source = Column(String(50))  # Which method found it
+    http_status = Column(Integer, nullable=True)
+    http_title = Column(String(500), nullable=True)
+    response_time = Column(Float)
+    discovered_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    scan_job = relationship("ScanJob", backref="subdomains")
+
+class SubdomainEnumerationJob(Base):
+    """Database model for subdomain enumeration jobs"""
+    __tablename__ = 'subdomain_enumeration_jobs'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    scan_job_id = Column(Integer, ForeignKey('scan_jobs.id', ondelete='CASCADE'))
+    domain = Column(String(255), nullable=False)
+    status = Column(String(50), default="pending")  # pending, running, completed, failed
+    methods_used = Column(JSON)  # List of methods used
+    total_checked = Column(Integer, default=0)
+    total_found = Column(Integer, default=0)
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship
+    scan_job = relationship("ScanJob", backref="subdomain_enumeration_jobs")
     # Relationship
     scan_job = relationship("ScanJob", backref="technology_footprints")
