@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from src.api import recon
+from src.api import sql_injection
 from sqlalchemy.orm import Session
 
 from src.core.config import settings
@@ -15,6 +16,7 @@ app = FastAPI(
     version=settings.APP_VERSION
 )
 app.include_router(recon.router)
+app.include_router(sql_injection.router)
 
 # Configure CORS
 app.add_middleware(

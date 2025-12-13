@@ -3,6 +3,7 @@ from sqlalchemy import Column, Integer, String, Text, Boolean, Float, DateTime, 
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 import enum
+import time
 
 Base = declarative_base()
 
@@ -176,3 +177,39 @@ class SubdomainEnumerationJob(Base):
     scan_job = relationship("ScanJob", backref="subdomain_enumeration_jobs")
     # Relationship
     scan_job = relationship("ScanJob", backref="technology_footprints")
+
+class SQLInjectionScan(Base):
+    """Database model for SQL injection scans"""
+    __tablename__ = 'sql_injection_scans'
+
+    id = Column(Integer, primary_key=True, index=True)
+    scan_id = Column(String(255), nullable=False, unique=True, index=True)
+    url = Column(String(2048), nullable=False)
+    status = Column(String(50), default="pending")
+    duration = Column(Float)
+    options = Column(JSON, default=dict)
+    statistics = Column(JSON, default=dict)
+    created_at = Column(Float, default=time.time)
+
+    # Relationship to vulnerabilities
+    vulnerabilities = relationship("SQLInjectionVulnerability", back_populates="scan", cascade="all, delete-orphan")
+
+class SQLInjectionVulnerability(Base):
+    """Database model for SQL injection vulnerabilities"""
+    __tablename__ = 'sql_injection_vulnerabilities'
+
+    id = Column(Integer, primary_key=True, index=True)
+    scan_id = Column(String(255), ForeignKey('sql_injection_scans.scan_id'), nullable=False, index=True)
+    url = Column(String(2048), nullable=False)
+    parameter = Column(String(500))
+    payload = Column(Text)
+    injection_type = Column(String(50))
+    database_type = Column(String(50))
+    confidence = Column(Float, default=0.0)
+    evidence = Column(JSON, default=dict)
+    method = Column(String(10))
+    detector = Column(String(50))
+    created_at = Column(Float, default=time.time)
+
+    # Relationship to scan
+    scan = relationship("SQLInjectionScan", back_populates="vulnerabilities")
