@@ -53,3 +53,10 @@ asyncio==3.4.3
 # Additional utilities
 tqdm==4.66.1  # Progress bars
 colorama==0.4.6  # Colored output
+
+# SQL injection detection
+regex==2023.12.25
+python-Levenshtein==0.23.0
+
+# For time-based detection
+aiohttp==3.9.1
