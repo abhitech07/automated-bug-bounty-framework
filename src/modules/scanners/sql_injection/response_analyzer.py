@@ -10,8 +10,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 @dataclass
+class ResponseSignature:
+    """Signature of an HTTP response"""
+    text: str
+    status_code: int
+
+@dataclass
 class ResponseAnalysis:
     """Results of response analysis"""
+    text: str
+    status_code: int
     is_different: bool
     similarity_score: float
     length_difference: int
@@ -22,12 +30,39 @@ class ResponseAnalysis:
     has_time_delay: bool
     response_time_ms: float
 
-class SQLResponseAnalyzer:
+class SQLiResponseAnalyzer:
     """Analyzes responses for SQL injection indicators"""
-    
+
     def __init__(self):
         self.sql_error_patterns = self._load_sql_error_patterns()
         self.database_error_patterns = self._load_database_error_patterns()
+
+    def create_signature(self, text: str, status_code: int) -> ResponseSignature:
+        """Create a response signature"""
+        return ResponseSignature(text=text, status_code=status_code)
+
+    def compare_responses(self, sig1: ResponseSignature, sig2: ResponseSignature) -> Dict[str, float]:
+        """Compare two response signatures"""
+        similarity = self._calculate_similarity(sig1.text, sig2.text)
+        return {'overall': similarity}
+
+    def is_error_based_vulnerable(self, text: str) -> Tuple[bool, float, Dict[str, List[str]]]:
+        """Check for error-based SQL injection"""
+        errors = {}
+        # Simplified: check for all errors
+        all_errors = self._check_sql_errors(text)
+        if all_errors:
+            errors['generic'] = all_errors
+        has_errors = bool(all_errors)
+        confidence = 0.8 if has_errors else 0.0
+        return has_errors, confidence, errors
+
+    def is_boolean_based_vulnerable(self, true_sig: ResponseSignature, false_sig: ResponseSignature) -> Tuple[bool, float]:
+        """Check for boolean-based SQL injection"""
+        similarity = self._calculate_similarity(true_sig.text, false_sig.text)
+        is_vulnerable = similarity < 0.9
+        confidence = 1.0 - similarity
+        return is_vulnerable, confidence
     
     def _load_sql_error_patterns(self) -> List[re.Pattern]:
         """Load SQL error regex patterns"""
@@ -140,6 +175,8 @@ class SQLResponseAnalyzer:
             has_time_delay = test_time_ms > (baseline_time_ms * 2)
         
         return ResponseAnalysis(
+            text=test_response,
+            status_code=200,  # Default status code
             is_different=is_different,
             similarity_score=similarity,
             length_difference=length_diff,
