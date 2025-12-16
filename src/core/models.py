@@ -1,215 +1,104 @@
-from datetime import datetime
-from sqlalchemy import Column, Integer, String, Text, Boolean, Float, DateTime, JSON, ForeignKey, Enum
-from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base
-import enum
-import time
+from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
+from sqlalchemy.orm import Session
 
-Base = declarative_base()
+from src.core.config import settings
+from src.core.database import get_db, create_tables
+from src.core import models
 
-class ScanStatus(enum.Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
+# Import routers - FIX: Use correct import path
+from src.api import recon
 
-class VulnType(enum.Enum):
-    SQL_INJECTION = "sql_injection"
-    XSS = "cross_site_scripting"
-    IDOR = "insecure_direct_object_reference"
-    SSRF = "server_side_request_forgery"
-    CSRF = "cross_site_request_forgery"
-    INFO_DISCLOSURE = "information_disclosure"
-    DIRECTORY_LISTING = "directory_listing"
-    OTHER = "other"
+# Initialize FastAPI app
+app = FastAPI(
+    title=settings.APP_NAME,
+    description="API for the AI-assisted bug bounty pentesting framework",
+    version=settings.APP_VERSION
+)
 
-class Target(Base):
-    __tablename__ = 'targets'
+# Include routers
+app.include_router(recon.router)
 
-    id = Column(Integer, primary_key=True, index=True)
-    # The root URL or domain to scan
-    url = Column(String(2048), nullable=False, index=True)
-    # A friendly name for the target
-    name = Column(String(255))
-    # Scope rules (e.g., include/exclude paths) stored as JSON
-    scope_rules = Column(JSON, default=dict)
-    # Active or inactive for scanning
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+# NOTE: SQL injection router temporarily disabled until service is fixed
+# Uncomment after fixing the service:
+# from src.api import sql_injection
+# app.include_router(sql_injection.router)
 
-    # Relationship: One Target can have many ScanJobs
-    scan_jobs = relationship("ScanJob", back_populates="target", cascade="all, delete-orphan")
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-class ScanJob(Base):
-    __tablename__ = 'scan_jobs'
+# Create tables on startup (for development)
+@app.on_event("startup")
+def on_startup():
+    if settings.DEBUG:
+        create_tables()
+        print("Development mode: Database tables verified/created.")
 
-    id = Column(Integer, primary_key=True, index=True)
-    # Link to the Target
-    target_id = Column(Integer, ForeignKey('targets.id', ondelete='CASCADE'))
-    status = Column(Enum(ScanStatus), default=ScanStatus.PENDING, index=True)
-    # Config for this specific scan (scan depth, modules to run, etc.)
-    scan_config = Column(JSON, default=dict)
-    started_at = Column(DateTime)
-    completed_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
+# Health check endpoint
+@app.get("/")
+async def root():
+    return {
+        "message": settings.APP_NAME,
+        "status": "operational",
+        "version": settings.APP_VERSION
+    }
 
-    # Relationships
-    target = relationship("Target", back_populates="scan_jobs")
-    findings = relationship("Finding", back_populates="scan_job", cascade="all, delete-orphan")
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "database": "connected"}
 
-class Finding(Base):
-    __tablename__ = 'findings'
+# Test database endpoint
+@app.get("/api/test-db")
+async def test_db(db: Session = Depends(get_db)):
+    try:
+        result = db.execute("SELECT version()").fetchone()
+        return {"database": "connected", "version": result[0]}
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Database connection failed: {str(e)}"
+        )
 
-    id = Column(Integer, primary_key=True, index=True)
-    scan_job_id = Column(Integer, ForeignKey('scan_jobs.id', ondelete='CASCADE'))
-    vulnerability_type = Column(Enum(VulnType), nullable=False, index=True)
-    # Specific URL where the issue was found
-    url = Column(Text, nullable=False)
-    # The vulnerable parameter (e.g., 'id', 'q')
-    parameter = Column(String(500))
-    # The payload that triggered the finding
-    payload = Column(Text)
-    http_method = Column(String(10))
-    # The full HTTP request that was sent
-    http_request = Column(Text)
-    # The full HTTP response received
-    http_response = Column(Text)
-    # Confidence score from the AI Triage engine (0.0 to 1.0)
-    ai_confidence_score = Column(Float, default=0.0)
-    # AI classification: 'true_positive', 'false_positive', 'needs_review'
-    ai_classification = Column(String(50), default='needs_review')
-    # Has this finding been safely verified?
-    is_verified = Column(Boolean, default=False)
-    # Manual severity override (Critical, High, Medium, Low, Info)
-    severity = Column(String(20))
-    created_at = Column(DateTime, default=datetime.utcnow)
+# Test SQL injection module endpoint
+@app.get("/api/test-sqli")
+async def test_sqli():
+    """Test if SQL injection module is properly configured"""
+    try:
+        from src.modules.scanners.sql_injection import SQLInjectionDetector
+        return {
+            "module": "sql-injection",
+            "status": "operational",
+            "detector": "available"
+        }
+    except Exception as e:
+        return {
+            "module": "sql-injection",
+            "status": "error",
+            "error": str(e)
+        }
 
-    # Relationship
-    scan_job = relationship("ScanJob", back_populates="findings")
+from src import schemas
 
-    # Add these models for storing crawl results
-class CrawlResultDB(Base):
-    """Database model for storing crawl results"""
-    __tablename__ = 'crawl_results'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    scan_job_id = Column(Integer, ForeignKey('scan_jobs.id', ondelete='CASCADE'))
-    url = Column(String(2048), nullable=False, index=True)
-    status_code = Column(Integer)
-    content_type = Column(String(255))
-    content_length = Column(Integer)
-    title = Column(String(500))
-    links_found = Column(Integer, default=0)
-    forms_found = Column(Integer, default=0)
-    processing_time = Column(Float)
-    is_js_rendered = Column(Boolean, default=False)
-    screenshot_path = Column(String(500))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationship
-    scan_job = relationship("ScanJob", backref="crawl_results")
+@app.post("/api/targets/", response_model=schemas.TargetResponse)
+def create_target(target: schemas.TargetCreate, db: Session = Depends(get_db)):
+    db_target = models.Target(**target.dict())
+    db.add(db_target)
+    db.commit()
+    db.refresh(db_target)
+    return db_target
 
-class DiscoveredURL(Base):
-    """Database model for discovered URLs"""
-    __tablename__ = 'discovered_urls'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    scan_job_id = Column(Integer, ForeignKey('scan_jobs.id', ondelete='CASCADE'))
-    url = Column(String(2048), nullable=False, index=True)
-    source_url = Column(String(2048))  # Where this URL was discovered
-    depth = Column(Integer, default=0)
-    discovered_by = Column(String(50))  # 'crawler', 'sitemap', 'common_paths', etc.
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationship
-    scan_job = relationship("ScanJob", backref="discovered_urls")
-
-class TechnologyFootprint(Base):
-    """Database model for technology detection results"""
-    __tablename__ = 'technology_footprints'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    scan_job_id = Column(Integer, ForeignKey('scan_jobs.id', ondelete='CASCADE'))
-    url = Column(String(2048), nullable=False)
-    category = Column(String(50))  # 'web_framework', 'cms', 'javascript', etc.
-    technology = Column(String(100))
-    confidence = Column(Float, default=1.0)
-    detected_by = Column(String(50))  # 'header', 'content', 'cookie', 'url_pattern'
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-class Subdomain(Base):
-    """Database model for discovered subdomains"""
-    __tablename__ = 'subdomains'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    scan_job_id = Column(Integer, ForeignKey('scan_jobs.id', ondelete='CASCADE'))
-    domain = Column(String(255), nullable=False, index=True)
-    subdomain = Column(String(255), nullable=False, index=True)
-    ip_addresses = Column(JSON)  # List of IP addresses
-    cname = Column(String(255))
-    status = Column(String(50))  # active, inactive, active_http
-    source = Column(String(50))  # Which method found it
-    http_status = Column(Integer, nullable=True)
-    http_title = Column(String(500), nullable=True)
-    response_time = Column(Float)
-    discovered_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationship
-    scan_job = relationship("ScanJob", backref="subdomains")
-
-class SubdomainEnumerationJob(Base):
-    """Database model for subdomain enumeration jobs"""
-    __tablename__ = 'subdomain_enumeration_jobs'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    scan_job_id = Column(Integer, ForeignKey('scan_jobs.id', ondelete='CASCADE'))
-    domain = Column(String(255), nullable=False)
-    status = Column(String(50), default="pending")  # pending, running, completed, failed
-    methods_used = Column(JSON)  # List of methods used
-    total_checked = Column(Integer, default=0)
-    total_found = Column(Integer, default=0)
-    started_at = Column(DateTime)
-    completed_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relationship
-    scan_job = relationship("ScanJob", backref="subdomain_enumeration_jobs")
-    # Relationship
-    scan_job = relationship("ScanJob", backref="technology_footprints")
-
-class SQLInjectionScan(Base):
-    """Database model for SQL injection scans"""
-    __tablename__ = 'sql_injection_scans'
-
-    id = Column(Integer, primary_key=True, index=True)
-    scan_id = Column(String(255), nullable=False, unique=True, index=True)
-    url = Column(String(2048), nullable=False)
-    status = Column(String(50), default="pending")
-    duration = Column(Float)
-    options = Column(JSON, default=dict)
-    statistics = Column(JSON, default=dict)
-    created_at = Column(Float, default=time.time)
-
-    # Relationship to vulnerabilities
-    vulnerabilities = relationship("SQLInjectionVulnerability", back_populates="scan", cascade="all, delete-orphan")
-
-class SQLInjectionVulnerability(Base):
-    """Database model for SQL injection vulnerabilities"""
-    __tablename__ = 'sql_injection_vulnerabilities'
-
-    id = Column(Integer, primary_key=True, index=True)
-    scan_id = Column(String(255), ForeignKey('sql_injection_scans.scan_id'), nullable=False, index=True)
-    url = Column(String(2048), nullable=False)
-    parameter = Column(String(500))
-    payload = Column(Text)
-    injection_type = Column(String(50))
-    database_type = Column(String(50))
-    confidence = Column(Float, default=0.0)
-    evidence = Column(JSON, default=dict)
-    method = Column(String(10))
-    detector = Column(String(50))
-    created_at = Column(Float, default=time.time)
-
-    # Relationship to scan
-    scan = relationship("SQLInjectionScan", back_populates="vulnerabilities")
+# This allows running with: python src/main.py
+if __name__ == "__main__":
+    uvicorn.run(
+        "src.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.DEBUG
+    )
